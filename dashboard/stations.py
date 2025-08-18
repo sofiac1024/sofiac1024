@@ -1,4 +1,5 @@
 import csv
+import streamlit as st
 
 datafile = 'PUNTOS_PUBLICOS_RECARGA_VEHICULOS_ELECTRICOS.csv'
 
@@ -12,9 +13,12 @@ def read_data():
             coorX = float(row['POINT_X'].replace(',', '.'))
             coorY = float(row['POINT_Y'].replace(',', '.'))
             points_data.append({
-                'coorX' : coorX,
-                'coorY' : coorY
+                'longitude' : coorX,
+                'latitude' : coorY
             })
         return points_data
-    
-print(read_data())
+
+station_points = read_data()
+
+# Crear el mapa con los puntos encontrados
+st.map(station_points, zoom=7.5)
