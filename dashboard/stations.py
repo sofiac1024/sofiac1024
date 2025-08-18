@@ -21,4 +21,5 @@ def read_data():
 station_points = read_data()
 
 # Crear el mapa con los puntos encontrados
-st.map(station_points, zoom=7.5)
+st.header("EV Fast-Charginig Stations in Madrid (Spain)")
+st.map(station_points, latitude='latitude', longitude='longitude', zoom=8)
