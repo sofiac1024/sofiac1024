@@ -8,6 +8,7 @@ from streamlit_folium import st_folium
 import requests, json
 from geopy.distance import geodesic
 import plotly.express as px
+from collections import Counter
 
 API_KEY = "09b30b28-b517-4e00-b091-7209feb8e107"
 url = "https://api.openchargemap.io/v3/poi/"
@@ -31,7 +32,13 @@ def find_ocm_match(p, api_points):
             best_match = r
 
     p["usageCost"] = best_match.get("UsageCost", "No info")
-    p["connections"] = tuple([c["ConnectionType"]["Title"] for c in best_match.get("Connections", [])])
+    cnt = Counter()
+    power = dict()
+    for c in best_match.get("Connections", []):
+        cnt[c["ConnectionType"]["Title"]] += 1
+        power[c["ConnectionType"]["Title"]] = c["PowerKW"]
+    p["connections"] = cnt
+    p["connectionsKW"] = power
     p["status"] = best_match.get("StatusType", {}).get("Title", "Desconocido")
     return
 
@@ -71,7 +78,6 @@ def read_dataAPI():
     }
     resp = requests.get(url, params=params)
     ocm_data = resp.json()
-    print(json.dumps(ocm_data[11], indent=4, ensure_ascii=False))
     # Leer puntos de recarga de la base de datos del ayuntamiento
     csv_data = read_dataCSV()
 
@@ -83,6 +89,9 @@ def read_dataAPI():
 station_points = read_dataAPI()
 filtered_points = station_points.copy()
 
+
+# Título de la página
+st.header("Puntos de recarga públicos para vehículos eléctricos en Madrid (España)")
 
 # Crear pestañas
 tab1, tab2 = st.tabs(['Mapa de Estaciones', 'Estadísticas'])
@@ -107,23 +116,27 @@ with tab1:
             max-height: 114px; 
             overflow: auto;
         }
+            
+        [data-testid="stSidebarHeader"] {
+            height: 1.25rem; 
+        }
         </style>
-        ''')
+    ''')
     st.sidebar.header("Filtros")
     # Creamos un contenedor vacío en el sidebar (arriba de los filtros)
     contador = st.sidebar.empty()
     # Filtro por distrito
     districs = sorted(station_points['neighborhood'].unique())
-    selected_district = st.sidebar.multiselect("Selecciona barrio(s):", districs)
+    selected_district = st.sidebar.multiselect("**Selecciona barrio(s):**", districs, placeholder="")
     # Filtro por operador 
     managements = sorted(station_points['management'].unique())
-    selected_management = st.sidebar.multiselect("Selecciona tipo(s) de gestión:", managements)
+    selected_management = st.sidebar.multiselect("**Selecciona tipo(s) de gestión:**", managements, placeholder="")
     # Filtro por operador 
     operators = sorted(station_points['operator'].unique())
-    selected_operator = st.sidebar.multiselect("Selecciona operador(es):", operators)
+    selected_operator = st.sidebar.multiselect("**Selecciona operador(es):**", operators, placeholder="")
     # Filtro por tipo de conector
     all_connectors = sorted({c for conns in station_points['connections'] for c in conns})  # set para evitar duplicados
-    selected_connectors = st.sidebar.multiselect("Selecciona tipo(s) de conector:", all_connectors)
+    selected_connectors = st.sidebar.multiselect("**Selecciona tipo(s) de conector:**", all_connectors, placeholder="")
     # Aplicar filtros
     if selected_district:
         filtered_points = filtered_points[filtered_points['neighborhood'].isin(selected_district)]
@@ -152,6 +165,27 @@ with tab1:
     )
     # Añadir marcadores de las estaciones de recarga
     def popup_html(point):
+        # Construir descripción de conectores
+        if isinstance(point["connections"], dict) and isinstance(point["connectionsKW"], dict):
+            rows = []
+            for ctype in point["connections"].keys():
+                count = point["connections"].get(ctype, "N/A")
+                kw = point["connectionsKW"].get(ctype, "N/A")
+                rows.append(f"<tr><td>{ctype}</td><td>{kw} kW</td><td>{count}</td></tr>")
+            
+            connectors_str = f"""
+            <table style="width:100%; font-size:11px; border-collapse:collapse;" border="1">
+                <tr style="font-weight:bold; background-color:#f0f0f0;">
+                    <td>Tipo</td>
+                    <td>Potencia</td>
+                    <td>Cargadores</td>
+                </tr>
+                {''.join(rows)}
+            </table>
+            """
+        else:
+            connectors_str = "N/A"
+
         return f"""
         <div style="width: 250px; font-size: 12px;">
         <b>Ubicación:</b> {point['location']}<br>
@@ -159,7 +193,7 @@ with tab1:
         <b>Operador:</b> {point['operator']}<br>
         <b>Horario:</b> {point['timetable']}<br>
         <b>Coste:</b> {point['usageCost']}<br>
-        <b>Conectores:</b> {', '.join(point['connections']) if point['connections'] else 'N/A'}<br>
+        <b>Conectores:</b><br>{connectors_str}<br>
         <b>Estado:</b> {point['status']}<br>
         """
     for _, point in filtered_points.iterrows():
@@ -172,12 +206,13 @@ with tab1:
         ).add_to(marker_cluster)
 
     # Crear el mapa con los puntos encontrados
-    st.header("Puntos de recarga públicos para vehículos eléctricos en Madrid (España)")
+    st.header("Mapa Interactivo")
     # llamar a renderizar el Folium map en Streamlit
     st_data = st_folium(map, width=700, height=450)
 
 
 with tab2:
+    st.header("Estadísticas Relevantes")
     # Algunas estadísticas sobre la distribución y características de los puntos de recarga representados
     # Agrupar por barrio y contar
     df_barrios = (
@@ -206,15 +241,15 @@ with tab2:
     st.plotly_chart(chart1, use_container_width=True)
 
     df_operadores = filtered_points.groupby("operator").size().reset_index(name="count")
-    chart2 = px.bar(df_operadores,
-                x="operator",
-                y="count",
-                title="Número de puntos de recarga por operador",
-                color="count",
-                text="count",
-                labels={
-                    "operator": "Operador",   # renombra eje X
-                    "count": "Número de puntos de recarga"  # renombra eje Y
-                }
-    )
+    chart2 = px.pie(
+        df_operadores,
+        names="operator",      
+        values="count",        
+        title="Número de puntos de recarga por operador",
+        hover_data=["count"], 
+        labels={
+            "operator": "Operador",   # renombra eje X
+            "count": "Número de puntos de recarga"  # renombra eje Y
+        } 
+    )   
     st.plotly_chart(chart2, use_container_width=True)
